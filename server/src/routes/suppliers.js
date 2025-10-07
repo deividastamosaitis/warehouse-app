@@ -9,6 +9,7 @@ const router = Router();
 router.get("/", async (req, res, next) => {
   try {
     const items = await Supplier.find().sort({ name: 1 });
+    res.set("Cache-Control", "public, max-age=300");
     res.json({ ok: true, data: items });
   } catch (e) {
     next(e);

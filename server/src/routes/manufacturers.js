@@ -1,14 +1,13 @@
 import { Router } from "express";
 import Joi from "joi";
-import Group from "../models/Group.js";
+import Manufacturer from "../models/Manufacturer.js";
 import { validate } from "../utils/validate.js";
 
 const router = Router();
 
-// GET /api/groups – visos grupės (rikiuojamos pagal pavadinimą)
 router.get("/", async (req, res, next) => {
   try {
-    const items = await Group.find().sort({ name: 1 });
+    const items = await Manufacturer.find().sort({ name: 1 });
     res.set("Cache-Control", "public, max-age=300");
     res.json({ ok: true, data: items });
   } catch (e) {
@@ -16,19 +15,14 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-// POST /api/groups – pridėti naują grupę
 router.post(
   "/",
   validate(
-    Joi.object({
-      body: Joi.object({
-        name: Joi.string().min(1).required(),
-      }),
-    })
+    Joi.object({ body: Joi.object({ name: Joi.string().min(1).required() }) })
   ),
   async (req, res, next) => {
     try {
-      const item = await Group.create({ name: req.body.name.trim() });
+      const item = await Manufacturer.create({ name: req.body.name.trim() });
       res.status(201).json({ ok: true, data: item });
     } catch (e) {
       next(e);

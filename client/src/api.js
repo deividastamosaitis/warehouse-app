@@ -1,12 +1,13 @@
 import axios from "axios";
 
-export const api = axios.create({
-  baseURL: "http://localhost:4000/api",
-});
+export const api = axios.create({ baseURL: "http://localhost:4000/api" });
 
 export const fetchGroups = () => api.get("/groups").then((r) => r.data.data);
 export const fetchSuppliers = () =>
   api.get("/suppliers").then((r) => r.data.data);
+export const fetchManufacturers = () =>
+  api.get("/manufacturers").then((r) => r.data.data); // <— nauja
+
 export const searchProducts = (params) =>
   api.get("/products", { params }).then((r) => r.data);
 export const deleteProduct = (id) =>
@@ -17,3 +18,7 @@ export const adjustQuantity = (id, delta, note = "") =>
     .then((r) => r.data.data);
 export const intakeScan = (payload) =>
   api.post("/intake/scan", payload).then((r) => r.data.data);
+export const getProductByBarcode = (barcode) =>
+  api
+    .get(`/products/barcode/${encodeURIComponent(barcode)}`)
+    .then((r) => r.data.data);

@@ -6,7 +6,30 @@ import { validate } from "../utils/validate.js";
 
 const router = Router();
 
-// GET /api/products?q=&groupId=&supplierId=&manufacturer=&page=&limit=&sort=
+// Greita paieška pagal barkodą – be populate, lean + select
+router.get(
+  "/barcode/:barcode",
+  validate(
+    Joi.object({ params: Joi.object({ barcode: Joi.string().required() }) })
+  ),
+  async (req, res, next) => {
+    try {
+      const { barcode } = req.valid.params;
+      const product = await Product.findOne({ barcode })
+        .select("barcode name manufacturer group supplier quantity")
+        .lean();
+      if (!product)
+        return res
+          .status(404)
+          .json({ ok: false, message: "Prekė su šiuo barkodu nerasta" });
+      res.json({ ok: true, data: product });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// Sąrašas + filtrai – lean + select, be populate
 router.get(
   "/",
   validate(
@@ -15,7 +38,7 @@ router.get(
         q: Joi.string().allow("").optional(),
         groupId: Joi.string().allow("").optional(),
         supplierId: Joi.string().allow("").optional(),
-        manufacturer: Joi.string().allow("").optional(),
+        manufacturerId: Joi.string().allow("").optional(),
         page: Joi.number().integer().min(1).default(1),
         limit: Joi.number().integer().min(1).max(100).default(20),
         sort: Joi.string()
@@ -26,28 +49,26 @@ router.get(
   ),
   async (req, res, next) => {
     try {
-      let { q, groupId, supplierId, manufacturer, page, limit, sort } =
+      let { q, groupId, supplierId, manufacturerId, page, limit, sort } =
         req.valid.query;
-
-      // Konvertuojam tuščius į undefined
       q = q?.trim() || undefined;
       groupId = groupId || undefined;
       supplierId = supplierId || undefined;
-      manufacturer = manufacturer?.trim() || undefined;
+      manufacturerId = manufacturerId || undefined;
 
       const filter = {};
       if (q) filter.$text = { $search: q };
       if (groupId) filter.group = groupId;
       if (supplierId) filter.supplier = supplierId;
-      if (manufacturer) filter.manufacturer = new RegExp(manufacturer, "i");
+      if (manufacturerId) filter.manufacturer = manufacturerId;
 
       const projection = q ? { score: { $meta: "textScore" } } : {};
-      const cursor = Product.find(filter, projection)
-        .populate("group", "name")
-        .populate("supplier", "name");
+      let cursor = Product.find(filter, projection)
+        .select("barcode name quantity group supplier manufacturer")
+        .lean();
 
-      if (q) cursor.sort({ score: { $meta: "textScore" } });
-      else cursor.sort({ [sort]: 1 });
+      if (q) cursor = cursor.sort({ score: { $meta: "textScore" } });
+      else cursor = cursor.sort({ [sort]: 1 });
 
       const total = await Product.countDocuments(filter);
       const items = await cursor.skip((page - 1) * limit).limit(limit);
@@ -59,7 +80,7 @@ router.get(
   }
 );
 
-// PATCH /api/products/:id/quantity
+// Kiekio korekcija – grąžinam minimalų objektą (be populate)
 router.patch(
   "/:id/quantity",
   validate(
@@ -85,30 +106,33 @@ router.patch(
           .status(400)
           .json({ ok: false, message: "Kiekis negali tapti neigiamas" });
 
-      product.quantity = newQty;
-      await product.save();
-
+      await Product.updateOne({ _id: id }, { $inc: { quantity: delta } });
       await StockMovement.create({
-        product: product._id,
+        product: id,
         type: delta >= 0 ? "IN" : "OUT",
         quantity: Math.abs(delta),
         note,
       });
 
-      res.json({ ok: true, data: product });
+      const updated = await Product.findById(id)
+        .select("barcode name quantity group supplier manufacturer")
+        .lean();
+      res.json({ ok: true, data: updated });
     } catch (e) {
       next(e);
     }
   }
 );
 
-// DELETE /api/products/:id
+// Trinti
 router.delete(
   "/:id",
   validate(Joi.object({ params: Joi.object({ id: Joi.string().required() }) })),
   async (req, res, next) => {
     try {
-      const product = await Product.findById(req.valid.params.id);
+      const product = await Product.findById(req.valid.params.id)
+        .select("_id quantity")
+        .lean();
       if (!product)
         return res.status(404).json({ ok: false, message: "Prekė nerasta" });
       if (product.quantity > 0)
@@ -119,7 +143,7 @@ router.delete(
             message: "Pirma išimkite likutį (kiekis turi būti 0)",
           });
 
-      await product.deleteOne();
+      await Product.deleteOne({ _id: product._id });
       res.json({ ok: true });
     } catch (e) {
       next(e);

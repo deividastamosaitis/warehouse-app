@@ -9,8 +9,8 @@ const router = Router();
 const bodySchema = Joi.object({
   barcode: Joi.string().required(),
   quantity: Joi.number().integer().min(1).required(),
-  name: Joi.string().allow("").optional(), // privaloma jei nauja prekė
-  manufacturer: Joi.string().allow("").optional(), // privaloma jei nauja prekė
+  name: Joi.string().allow("").optional(), // būtinas, jei kuriam naują
+  manufacturerId: Joi.string().allow("").optional(), // būtinas, jei kuriam naują
   groupId: Joi.string().allow("").optional(),
   supplierId: Joi.string().allow("").optional(),
 });
@@ -20,33 +20,53 @@ router.post(
   validate(Joi.object({ body: bodySchema })),
   async (req, res, next) => {
     try {
-      const { barcode, quantity, name, manufacturer, groupId, supplierId } =
+      const { barcode, quantity, name, manufacturerId, groupId, supplierId } =
         req.valid.body;
 
-      let product = await Product.findOne({ barcode });
+      // Greita šaka – jei produktas jau yra
+      const updated = await Product.findOneAndUpdate(
+        { barcode },
+        {
+          $inc: { quantity },
+          ...(groupId ? { $set: { group: groupId } } : {}),
+          ...(supplierId ? { $set: { supplier: supplierId } } : {}),
+        },
+        {
+          new: true,
+          projection: "barcode name quantity group supplier manufacturer",
+          lean: true,
+        }
+      );
 
-      if (product) {
-        // egzistuoja – nekeičiam pavadinimo/gamintojo
-        product.quantity += quantity;
-        if (groupId) product.group = groupId;
-        if (supplierId) product.supplier = supplierId;
-        await product.save();
-      } else {
-        if (!name || !manufacturer)
+      let product = updated;
+
+      // Jei nebuvo – kuriam naują (reikia name + manufacturerId)
+      if (!product) {
+        if (!name || !manufacturerId) {
           return res
             .status(400)
             .json({
               ok: false,
               message: "Naujam produktui būtini pavadinimas ir gamintojas",
             });
-        product = await Product.create({
+        }
+        const created = await Product.create({
           barcode,
           name: name.trim(),
-          manufacturer: manufacturer.trim(),
+          manufacturer: manufacturerId,
           group: groupId || undefined,
           supplier: supplierId || undefined,
           quantity,
         });
+        product = {
+          _id: created._id,
+          barcode: created.barcode,
+          name: created.name,
+          quantity: created.quantity,
+          group: created.group || null,
+          supplier: created.supplier || null,
+          manufacturer: created.manufacturer,
+        };
       }
 
       await StockMovement.create({
@@ -56,9 +76,6 @@ router.post(
         supplier: supplierId || undefined,
         note: "Priėmimas pagal skenavimą",
       });
-
-      product = await product.populate("group", "name");
-      product = await product.populate("supplier", "name");
 
       res.status(201).json({ ok: true, data: product });
     } catch (e) {
