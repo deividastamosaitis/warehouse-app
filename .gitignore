@@ -1,0 +1,20 @@
+# Bendra
+node_modules/
+dist/
+coverage/
+*.log
+logs/
+.DS_Store
+.vscode/
+.idea/
+
+# Vite/React laikini
+client/.vite/
+client/dist/
+
+# Env failai (niekada nekeliame tikrų slaptažodžių!)
+*.env
+**/*.env
+
+# OS specifika
+Thumbs.db
