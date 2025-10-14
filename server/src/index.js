@@ -11,6 +11,7 @@ import intake from "./routes/intake.js";
 import groups from "./routes/groups.js";
 import suppliers from "./routes/suppliers.js";
 import manufacturers from "./routes/manufacturers.js";
+import movements from "./routes/movements.js";
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ app.use("/api/intake", intake);
 app.use("/api/groups", groups);
 app.use("/api/suppliers", suppliers);
 app.use("/api/manufacturers", manufacturers);
+app.use("/api/movements", movements);
 
 app.use(errorHandler);
 

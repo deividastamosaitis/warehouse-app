@@ -1,4 +1,5 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import Joi from "joi";
 import Product from "../models/Product.js";
 import StockMovement from "../models/StockMovement.js";
@@ -28,6 +29,38 @@ router.get(
     }
   }
 );
+// GET /api/products/:id/invoices?limit=5  → paskutinės IN sąskaitos
+router.get("/:id/invoices", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const limit = Number(req.query.limit || 5);
+    const productId = new mongoose.Types.ObjectId(id);
+
+    const rows = await StockMovement.aggregate([
+      {
+        $match: {
+          product: productId,
+          type: "IN",
+          invoiceNumber: { $exists: true, $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: "$invoiceNumber",
+          last: { $max: "$createdAt" },
+          totalQty: { $sum: "$quantity" },
+        },
+      },
+      { $sort: { last: -1 } },
+      { $limit: limit },
+      { $project: { _id: 0, invoiceNumber: "$_id", last: 1, totalQty: 1 } },
+    ]);
+
+    res.json({ ok: true, data: rows });
+  } catch (e) {
+    next(e);
+  }
+});
 
 // Sąrašas + filtrai – lean + select, be populate
 router.get(
@@ -136,12 +169,10 @@ router.delete(
       if (!product)
         return res.status(404).json({ ok: false, message: "Prekė nerasta" });
       if (product.quantity > 0)
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            message: "Pirma išimkite likutį (kiekis turi būti 0)",
-          });
+        return res.status(400).json({
+          ok: false,
+          message: "Pirma išimkite likutį (kiekis turi būti 0)",
+        });
 
       await Product.deleteOne({ _id: product._id });
       res.json({ ok: true });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   searchProducts,
   fetchGroups,
@@ -8,6 +8,7 @@ import {
   deleteProduct,
 } from "../api";
 import QuantityAdjustModal from "../components/QuantityAdjustModal";
+import InvoicesModal from "../components/InvoicesModal"; // <— būtinai!
 
 export default function Inventory() {
   const [q, setQ] = useState("");
@@ -20,11 +21,13 @@ export default function Inventory() {
   const [manufacturers, setManufacturers] = useState([]);
 
   const [items, setItems] = useState([]);
-  // ⬇️ Pervadintas state – kad nesusikirstų su API atsakymo "pagination"
   const [pager, setPager] = useState({ total: 0, page: 1, limit: 50 });
 
   const [selected, setSelected] = useState(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
+
+  const [invOpen, setInvOpen] = useState(false);
+  const [invProduct, setInvProduct] = useState(null);
 
   useEffect(() => {
     Promise.all([fetchGroups(), fetchSuppliers(), fetchManufacturers()]).then(
@@ -49,23 +52,45 @@ export default function Inventory() {
     [manufacturers]
   );
 
-  async function load(page = 1) {
-    // ⬇️ Pervadinam atsakymo pagination į "meta"
-    const { data, pagination: meta } = await searchProducts({
-      q,
-      groupId,
-      supplierId,
-      manufacturerId,
-      page,
-      limit: pager.limit, // naudojam state "pager", o ne lokalu "pagination"
-    });
-    setItems(data);
-    setPager(meta);
-  }
+  // debounce paieška/filtrai – kad nerednerintų per dažnai
+  const [debounced, setDebounced] = useState({
+    q: "",
+    groupId: "",
+    supplierId: "",
+    manufacturerId: "",
+  });
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebounced({ q, groupId, supplierId, manufacturerId });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, groupId, supplierId, manufacturerId]);
+
+  const load = useCallback(
+    async (page = 1) => {
+      const { data, pagination: meta } = await searchProducts({
+        q: debounced.q,
+        groupId: debounced.groupId,
+        supplierId: debounced.supplierId,
+        manufacturerId: debounced.manufacturerId,
+        page,
+        limit: pager.limit,
+      });
+      setItems(data);
+      setPager(meta);
+    },
+    [
+      debounced.q,
+      debounced.groupId,
+      debounced.supplierId,
+      debounced.manufacturerId,
+      pager.limit,
+    ]
+  );
 
   useEffect(() => {
     load(1);
-  }, [q, groupId, supplierId, manufacturerId]);
+  }, [load]);
 
   async function onAdjustConfirm(type, qty, note) {
     const delta = type === "IN" ? qty : -qty;
@@ -169,6 +194,15 @@ export default function Inventory() {
                   <div className="inline-flex gap-2">
                     <button
                       onClick={() => {
+                        setInvProduct(item);
+                        setInvOpen(true);
+                      }}
+                      className="px-3 py-1 rounded-lg bg-blue-600 text-white"
+                    >
+                      Sąskaitos
+                    </button>
+                    <button
+                      onClick={() => {
                         setSelected(item);
                         setAdjustOpen(true);
                       }}
@@ -214,6 +248,11 @@ export default function Inventory() {
         open={adjustOpen}
         onClose={() => setAdjustOpen(false)}
         onConfirm={onAdjustConfirm}
+      />
+      <InvoicesModal
+        product={invProduct}
+        open={invOpen}
+        onClose={() => setInvOpen(false)}
       />
     </div>
   );

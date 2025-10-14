@@ -5,6 +5,7 @@ import {
   fetchSuppliers,
   fetchManufacturers,
   getProductByBarcode,
+  adjustQuantity,
 } from "../api";
 import Modal from "../components/Modal";
 import Select from "../components/Select";
@@ -14,24 +15,26 @@ export default function Scan() {
   const scanInputRef = useRef(null);
   const idleTimerRef = useRef(null);
 
-  const [quickMode, setQuickMode] = useState(true);
-  const [quickQty, setQuickQty] = useState(1);
+  // Veiksmas: IN arba OUT
+  const [action, setAction] = useState("IN");
 
-  const [scanned, setScanned] = useState("");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
   const [groups, setGroups] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [manufacturers, setManufacturers] = useState([]);
 
   const [isExisting, setIsExisting] = useState(false);
+  const [current, setCurrent] = useState(null); // visas produktas (kai yra)
   const [barcode, setBarcode] = useState("");
   const [name, setName] = useState("");
-  const [manufacturerId, setManufacturerId] = useState(""); // <— ID vietoje teksto
-  const [manufacturerName, setManufacturerName] = useState(""); // tik rodymui
+  const [manufacturerId, setManufacturerId] = useState("");
+  const [manufacturerName, setManufacturerName] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [groupId, setGroupId] = useState("");
   const [supplierId, setSupplierId] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState(""); // tik IN
   const [message, setMessage] = useState("");
 
   const [toasts, setToasts] = useState([]);
@@ -49,14 +52,12 @@ export default function Scan() {
   };
 
   useEffect(() => {
-    fetchGroups()
-      .then(setGroups)
-      .catch(() => {});
-    fetchSuppliers()
-      .then(setSuppliers)
-      .catch(() => {});
-    fetchManufacturers()
-      .then(setManufacturers)
+    Promise.all([fetchGroups(), fetchSuppliers(), fetchManufacturers()])
+      .then(([gs, ss, ms]) => {
+        setGroups(gs);
+        setSuppliers(ss);
+        setManufacturers(ms);
+      })
       .catch(() => {});
     scanInputRef.current?.focus();
   }, []);
@@ -82,56 +83,70 @@ export default function Scan() {
   }
 
   async function handleScanned(code) {
-    setScanned(code);
     setBarcode(code);
     setQuantity(1);
     setMessage("");
+    setInvoiceNumber("");
 
     try {
       const existing = await getProductByBarcode(code);
 
-      if (quickMode) {
-        const qty = Number(quickQty) || 1;
-        await intakeScan({ barcode: code, quantity: qty });
-        pushToast(
-          "success",
-          `+${qty} vnt. pridėta: ${existing.name}`,
-          "Prekė pridėta"
-        );
-        addHistory({
-          code,
-          name: existing.name,
-          manufacturer: existing.manufacturer?.name,
-          qty,
-          status: "Pridėta (greitas)",
-        });
-        scanInputRef.current?.focus();
-        return;
-      }
-
+      // TURIMA PREKĖ
       setIsExisting(true);
+      setCurrent(existing);
       setName(existing.name);
       setManufacturerId(existing.manufacturer?._id || "");
       setManufacturerName(existing.manufacturer?.name || "");
       setGroupId(existing.group?._id || "");
       setSupplierId(existing.supplier?._id || "");
+
+      // Jei pasirinktas OUT, bet kiekis 0 – neleisti
+      if (action === "OUT" && (!existing.quantity || existing.quantity <= 0)) {
+        pushToast(
+          "error",
+          "Negalima išimti: kiekis sandėlyje yra 0.",
+          "Klaida"
+        );
+        scanInputRef.current?.focus();
+        return;
+      }
+
       setOpen(true);
-      setTimeout(() => document.getElementById("qty-input")?.focus(), 0);
+      // fokusas pagal veiksmą
+      setTimeout(() => {
+        const el = document.getElementById("qty-input");
+        el?.focus();
+        el?.select?.();
+      }, 0);
+
       addHistory({
         code,
         name: existing.name,
         manufacturer: existing.manufacturer?.name,
         qty: 0,
-        status: "Laukia patvirtinimo",
+        status: action === "IN" ? "Laukia pridėjimo" : "Laukia išėmimo",
       });
     } catch {
-      // naujas
+      // NAUJA PREKĖ: OUT draudžiam
+      if (action === "OUT") {
+        pushToast(
+          "error",
+          "Šio barkodo sistemoje nėra – negalima išimti.",
+          "Klaida"
+        );
+        scanInputRef.current?.focus();
+        return;
+      }
+
+      // Naujam IN – reikės pavadinimo ir gamintojo
       setIsExisting(false);
+      setCurrent(null);
       setName("");
       setManufacturerId("");
       setManufacturerName("");
       setGroupId("");
       setSupplierId("");
+      setInvoiceNumber("");
       setOpen(true);
       setTimeout(() => document.getElementById("name-input")?.focus(), 0);
       addHistory({
@@ -147,34 +162,85 @@ export default function Scan() {
   async function onSubmit() {
     setLoading(true);
     setMessage("");
+
     try {
-      const payload = {
-        barcode,
-        quantity: Number(quantity),
-        ...(isExisting ? {} : { name: name.trim(), manufacturerId }),
-        groupId,
-        supplierId,
-      };
-      const result = await intakeScan(payload);
+      const qtyNum = Math.max(1, Number(quantity) || 1);
 
-      pushToast(
-        "success",
-        `+${payload.quantity} vnt. pridėta: ${result.name}`,
-        "Prekė pridėta"
-      );
-      addHistory({
-        code: barcode,
-        name: result.name,
-        manufacturer: result.manufacturer?.name,
-        qty: payload.quantity,
-        status: isExisting ? "Pridėta" : "Sukurta ir pridėta",
-      });
+      if (action === "IN") {
+        // IN
+        const payload = {
+          barcode,
+          quantity: qtyNum,
+          ...(isExisting ? {} : { name: name.trim(), manufacturerId }),
+          groupId,
+          supplierId,
+          invoiceNumber: invoiceNumber.trim(),
+        };
+        const result = await intakeScan(payload);
 
-      setIsExisting(true);
-      setName(result.name);
-      setManufacturerId(result.manufacturer?._id || "");
-      setManufacturerName(result.manufacturer?.name || "");
-      setMessage(`OK! Pridėta. Dabartinis kiekis: ${result.quantity}`);
+        pushToast(
+          "success",
+          `+${qtyNum} vnt. pridėta${
+            invoiceNumber ? ` (sąsk.: ${invoiceNumber})` : ""
+          }: ${result.name}`,
+          "Prekė pridėta"
+        );
+        addHistory({
+          code: barcode,
+          name: result.name,
+          manufacturer: result.manufacturer?.name,
+          qty: qtyNum,
+          status: isExisting ? "Pridėta" : "Sukurta ir pridėta",
+          invoiceNumber: invoiceNumber || "",
+        });
+        setIsExisting(true);
+        setName(result.name);
+        setManufacturerId(result.manufacturer?._id || "");
+        setManufacturerName(result.manufacturer?.name || "");
+        setMessage(`OK! Pridėta. Dabartinis kiekis: ${result.quantity}`);
+      } else {
+        // OUT – leidžiama tik esamai prekei, su pakankamu likučiu
+        if (!isExisting || !current?._id) {
+          pushToast(
+            "error",
+            "Negalima išimti – prekės nėra sistemoje.",
+            "Klaida"
+          );
+          return;
+        }
+        if (qtyNum > (current.quantity || 0)) {
+          pushToast(
+            "error",
+            `Negalima išimti ${qtyNum} vnt. – sandėlyje tik ${current.quantity} vnt.`,
+            "Nepakanka kiekio"
+          );
+          return;
+        }
+
+        await adjustQuantity(current._id, -qtyNum, "Išėmimas pagal skenavimą");
+
+        pushToast(
+          "success",
+          `-${qtyNum} vnt. išimta: ${current.name}`,
+          "Išimta"
+        );
+        addHistory({
+          code: barcode,
+          name: current.name,
+          manufacturer: current.manufacturer?.name || "",
+          qty: -qtyNum,
+          status: "Išimta",
+        });
+
+        // atnaujink lokaliai rodoma info
+        setMessage(
+          `OK! Išimta. Dabartinis kiekis: ${(current.quantity || 0) - qtyNum}`
+        );
+        setCurrent((c) =>
+          c ? { ...c, quantity: (c.quantity || 0) - qtyNum } : c
+        );
+      }
+
       setOpen(false);
       scanInputRef.current?.focus();
     } catch (e) {
@@ -186,41 +252,44 @@ export default function Scan() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">
-        Priėmimas / Skenavimas (skeneriu)
-      </h1>
+      <h1 className="text-2xl font-bold mb-4">Priėmimas / Skenavimas</h1>
 
+      {/* Veiksmo pasirinkimas */}
       <div className="flex flex-wrap items-center gap-4 mb-4">
-        <label className="inline-flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={quickMode}
-            onChange={(e) => setQuickMode(e.target.checked)}
-            className="h-4 w-4"
-          />
-          <span className="font-medium">Greitas priėmimas</span>
-        </label>
-        <label className="inline-flex items-center gap-2">
-          <span className="text-sm text-gray-600">Kiekis (greitam)</span>
-          <input
-            type="number"
-            min={1}
-            value={quickQty}
-            onChange={(e) => setQuickQty(Number(e.target.value || 1))}
-            className="border rounded-xl p-2 w-24"
-          />
-          <span className="text-sm text-gray-600">vnt.</span>
-        </label>
+        <div className="inline-flex items-center gap-3 bg-white border rounded-2xl px-3 py-2">
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="radio"
+              name="action"
+              value="IN"
+              checked={action === "IN"}
+              onChange={() => setAction("IN")}
+            />
+            <span className="font-medium">Pridėti (IN)</span>
+          </label>
+          <span className="text-gray-300">|</span>
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="radio"
+              name="action"
+              value="OUT"
+              checked={action === "OUT"}
+              onChange={() => setAction("OUT")}
+            />
+            <span className="font-medium">Atimti (OUT)</span>
+          </label>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
+        {/* SKENAVIMAS */}
         <div className="bg-white rounded-2xl p-4 border">
           <label className="block">
             <span className="text-sm text-gray-600">Skenavimo laukas</span>
             <input
               ref={scanInputRef}
               onKeyDown={onScanKeyDown}
-              placeholder="Barkodas (su skeneriu automatiškai pasispaudžia ENTER)"
+              placeholder="Barkodas (skeneris dažniausiai pats paspaudžia ENTER)"
               className="mt-1 w-full border rounded-xl p-3"
             />
           </label>
@@ -264,6 +333,11 @@ export default function Scan() {
                     </div>
                     <div className="text-gray-700">{h.status}</div>
                   </div>
+                  {h.invoiceNumber ? (
+                    <div className="text-gray-600">
+                      Sąsk.: <strong>{h.invoiceNumber}</strong>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -278,7 +352,7 @@ export default function Scan() {
           setOpen(false);
           scanInputRef.current?.focus();
         }}
-        title="Naujas priėmimas"
+        title={action === "IN" ? "Priėmimas (IN)" : "Išėmimas (OUT)"}
       >
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
@@ -289,8 +363,14 @@ export default function Scan() {
               className="mt-1 w-full border rounded-xl p-2 bg-gray-100"
             />
           </label>
+
           <label className="block">
-            <span className="text-sm text-gray-600">Kiekis</span>
+            <span className="text-sm text-gray-600">
+              Kiekis{" "}
+              {action === "OUT" && current
+                ? `(likutis: ${current.quantity})`
+                : ""}
+            </span>
             <input
               id="qty-input"
               type="number"
@@ -300,11 +380,28 @@ export default function Scan() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") onSubmit();
               }}
-              className="mt-1 w-full border rounded-xl p-2"
+              className={`mt-1 w-full border rounded-xl p-2 ${
+                action === "OUT" ? "border-red-300" : ""
+              }`}
             />
           </label>
 
-          {!isExisting && (
+          {action === "IN" && (
+            <label className="block col-span-2">
+              <span className="text-sm text-gray-600">
+                Sąskaitos nr. (nebūtina)
+              </span>
+              <input
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
+                className="mt-1 w-full border rounded-xl p-2"
+                placeholder="PVZ-12345"
+              />
+            </label>
+          )}
+
+          {/* Naujos prekės laukeliai tik kai IN ir nėra tokios prekės */}
+          {action === "IN" && !isExisting && (
             <>
               <label className="block col-span-2">
                 <span className="text-sm text-gray-600">
@@ -326,6 +423,8 @@ export default function Scan() {
               />
             </>
           )}
+
+          {/* Esamai prekei rodoma gamintojo info (nekoreguojama) */}
           {isExisting && (
             <label className="block">
               <span className="text-sm text-gray-600">Gamintojas</span>
@@ -354,7 +453,7 @@ export default function Scan() {
         {isExisting && (
           <div className="text-sm text-gray-600 mt-2">
             Rasta esama prekė: <strong>{name}</strong> (
-            {manufacturerName || "—"}). Pavadinimo ir gamintojo keisti nereikia.
+            {manufacturerName || "—"}).
           </div>
         )}
         {message && <div className="text-sm mt-2">{message}</div>}
@@ -372,9 +471,15 @@ export default function Scan() {
           <button
             disabled={loading}
             onClick={onSubmit}
-            className="px-4 py-2 rounded-xl bg-gray-900 text-white"
+            className={`px-4 py-2 rounded-xl text-white ${
+              action === "OUT" ? "bg-red-600" : "bg-gray-900"
+            }`}
           >
-            {loading ? "Siunčiama..." : "Patvirtinti"}
+            {loading
+              ? "Siunčiama..."
+              : action === "OUT"
+              ? "Išimti"
+              : "Patvirtinti"}
           </button>
         </div>
       </Modal>

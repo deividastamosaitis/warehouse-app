@@ -9,10 +9,11 @@ const router = Router();
 const bodySchema = Joi.object({
   barcode: Joi.string().required(),
   quantity: Joi.number().integer().min(1).required(),
-  name: Joi.string().allow("").optional(), // būtinas, jei kuriam naują
-  manufacturerId: Joi.string().allow("").optional(), // būtinas, jei kuriam naują
+  name: Joi.string().allow("").optional(),
+  manufacturerId: Joi.string().allow("").optional(),
   groupId: Joi.string().allow("").optional(),
   supplierId: Joi.string().allow("").optional(),
+  invoiceNumber: Joi.string().allow("").optional(),
 });
 
 router.post(
@@ -20,10 +21,16 @@ router.post(
   validate(Joi.object({ body: bodySchema })),
   async (req, res, next) => {
     try {
-      const { barcode, quantity, name, manufacturerId, groupId, supplierId } =
-        req.valid.body;
+      const {
+        barcode,
+        quantity,
+        name,
+        manufacturerId,
+        groupId,
+        supplierId,
+        invoiceNumber,
+      } = req.valid.body;
 
-      // Greita šaka – jei produktas jau yra
       const updated = await Product.findOneAndUpdate(
         { barcode },
         {
@@ -40,7 +47,6 @@ router.post(
 
       let product = updated;
 
-      // Jei nebuvo – kuriam naują (reikia name + manufacturerId)
       if (!product) {
         if (!name || !manufacturerId) {
           return res
@@ -75,6 +81,7 @@ router.post(
         quantity,
         supplier: supplierId || undefined,
         note: "Priėmimas pagal skenavimą",
+        invoiceNumber: (invoiceNumber || "").trim(),
       });
 
       res.status(201).json({ ok: true, data: product });

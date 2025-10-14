@@ -22,3 +22,11 @@ export const getProductByBarcode = (barcode) =>
   api
     .get(`/products/barcode/${encodeURIComponent(barcode)}`)
     .then((r) => r.data.data);
+
+export const fetchMovements = (params) =>
+  api.get("/movements", { params }).then((r) => r.data);
+
+export const fetchProductInvoices = (productId, limit = 5) =>
+  api
+    .get(`/products/${productId}/invoices`, { params: { limit } })
+    .then((r) => r.data.data);
