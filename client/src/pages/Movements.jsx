@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchMovements } from "../api";
 
 export default function Movements() {
+  const [q, setQ] = useState("");
+
   const [productId, setProductId] = useState("");
   const [type, setType] = useState("");
   const [invoice, setInvoice] = useState("");
@@ -11,12 +13,12 @@ export default function Movements() {
   const [items, setItems] = useState([]);
   const [pager, setPager] = useState({ total: 0, page: 1, limit: 50 });
 
-  // apsauga nuo dvigubo pirmojo užkrovimo dev/StrictMode
   const didInitRef = useRef(false);
 
   const load = useCallback(
     async (page = 1) => {
       const { data, pagination: meta } = await fetchMovements({
+        q: q || undefined, // <— NAUJA
         productId: productId || undefined,
         type: type || undefined,
         invoice: invoice || undefined,
@@ -28,7 +30,7 @@ export default function Movements() {
       setItems(data);
       setPager(meta);
     },
-    [productId, type, invoice, dateFrom, dateTo, pager.limit]
+    [q, productId, type, invoice, dateFrom, dateTo, pager.limit]
   );
 
   useEffect(() => {
@@ -41,7 +43,14 @@ export default function Movements() {
     <div>
       <h1 className="text-2xl font-bold mb-4">Prekių judėjimai</h1>
 
-      <div className="bg-white border rounded-2xl p-4 grid md:grid-cols-6 gap-3 mb-4">
+      <div className="bg-white border rounded-2xl p-4 grid md:grid-cols-7 gap-3 mb-4">
+        {/* NAUJAS LAUKAS */}
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Pavadinimas / Barkodas"
+          className="border rounded-xl p-2"
+        />
         <input
           value={productId}
           onChange={(e) => setProductId(e.target.value)}

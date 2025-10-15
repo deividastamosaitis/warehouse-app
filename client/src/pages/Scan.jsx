@@ -11,6 +11,8 @@ import Modal from "../components/Modal";
 import Select from "../components/Select";
 import Toasts from "../components/Toasts";
 
+const BATCH_WINDOW_MS = 400; // per kiek ms kaupiame vienodą barkodą
+
 export default function Scan() {
   const scanInputRef = useRef(null);
   const idleTimerRef = useRef(null);
@@ -18,6 +20,12 @@ export default function Scan() {
   // Veiksmas: IN arba OUT
   const [action, setAction] = useState("IN");
 
+  // Automatinis režimas su kaupimu
+  const [autoMode, setAutoMode] = useState(true);
+  const [autoQty, setAutoQty] = useState(1);
+  const [autoInvoice, setAutoInvoice] = useState("");
+
+  // Modal / forma
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -26,7 +34,7 @@ export default function Scan() {
   const [manufacturers, setManufacturers] = useState([]);
 
   const [isExisting, setIsExisting] = useState(false);
-  const [current, setCurrent] = useState(null); // visas produktas (kai yra)
+  const [current, setCurrent] = useState(null);
   const [barcode, setBarcode] = useState("");
   const [name, setName] = useState("");
   const [manufacturerId, setManufacturerId] = useState("");
@@ -34,9 +42,15 @@ export default function Scan() {
   const [quantity, setQuantity] = useState(1);
   const [groupId, setGroupId] = useState("");
   const [supplierId, setSupplierId] = useState("");
-  const [invoiceNumber, setInvoiceNumber] = useState(""); // tik IN
+  const [invoiceNumber, setInvoiceNumber] = useState(""); // tik IN (per modalą)
   const [message, setMessage] = useState("");
+  const HISTORY_KEY = "scan_history_v1";
 
+  // Kaupimo sandėlis: Map<key, {code, action, count, timerId, name?}>
+  const batchRef = useRef(new Map());
+  const [batchView, setBatchView] = useState([]); // UI peržiūrai
+
+  // Toasts
   const [toasts, setToasts] = useState([]);
   const pushToast = (kind, text, title) => {
     const id = `${Date.now()}-${Math.random()}`;
@@ -45,10 +59,67 @@ export default function Scan() {
   };
   const removeToast = (id) => setToasts((t) => t.filter((x) => x.id !== id));
 
+  // Garso signalai (WebAudio)
+  const audioCtxRef = useRef(null);
+  function ensureAudioCtx() {
+    if (!audioCtxRef.current) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      audioCtxRef.current = new AudioContext();
+    }
+    return audioCtxRef.current;
+  }
+  async function beep(freq = 880, ms = 120, type = "sine", gain = 0.05) {
+    try {
+      const ctx = ensureAudioCtx();
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      g.gain.value = gain;
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start();
+      setTimeout(() => {
+        osc.stop();
+        osc.disconnect();
+        g.disconnect();
+      }, ms);
+    } catch {}
+  }
+  const soundOk = async () => {
+    await beep(1000, 120, "sine", 0.07);
+  };
+  const soundWarn = async () => {
+    await beep(600, 80, "square", 0.05);
+  };
+  const soundErr = async () => {
+    await beep(300, 120, "square", 0.06);
+    setTimeout(() => beep(250, 150, "square", 0.06), 130);
+  };
+
+  // Istorija
   const [history, setHistory] = useState([]);
+  const didLoadHistoryRef = useRef(false);
+  useEffect(() => {
+    if (didLoadHistoryRef.current) return;
+    didLoadHistoryRef.current = true;
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) setHistory(arr);
+      }
+    } catch {}
+  }, []);
   const addHistory = (entry) => {
-    const row = { time: new Date().toLocaleTimeString(), ...entry };
-    setHistory((h) => [row, ...h].slice(0, 30));
+    const row = { time: new Date().toLocaleString(), ...entry };
+    setHistory((h) => {
+      const next = [row, ...h].slice(0, 80); // laikom iki 80 įrašų
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -72,7 +143,7 @@ export default function Scan() {
     idleTimerRef.current = setTimeout(() => {
       const v = (scanInputRef.current?.value || "").trim();
       if (v.length >= 6) finalizeScan();
-    }, 250);
+    }, 150);
   }
 
   function finalizeScan() {
@@ -81,6 +152,119 @@ export default function Scan() {
     scanInputRef.current.value = "";
     handleScanned(code);
   }
+
+  // ───────── Kaupimo logika ─────────
+  function syncBatchView() {
+    const arr = Array.from(batchRef.current.values()).map((b) => ({
+      key: `${b.action}:${b.code}`,
+      code: b.code,
+      action: b.action,
+      count: b.count,
+      name: b.name || "",
+    }));
+    setBatchView(arr);
+  }
+
+  function scheduleBatch({ action, code, name }) {
+    const key = `${action}:${code}`;
+    const m = batchRef.current;
+    const prev = m.get(key) || { action, code, count: 0, timerId: null, name };
+
+    // Jeigu vėliau sužinom pavadinimą – įsirašom
+    if (name && !prev.name) prev.name = name;
+
+    prev.count += Math.max(1, Number(autoQty) || 1);
+    if (prev.timerId) clearTimeout(prev.timerId);
+    prev.timerId = setTimeout(() => flushBatch(key), BATCH_WINDOW_MS);
+    m.set(key, prev);
+    syncBatchView();
+  }
+
+  async function flushBatch(key) {
+    const m = batchRef.current;
+    const entry = m.get(key);
+    if (!entry) return;
+    m.delete(key);
+    syncBatchView();
+
+    const { action: act, code, count } = entry;
+
+    try {
+      const existing = await getProductByBarcode(code);
+      const pname = existing?.name || entry.name || code;
+
+      if (act === "IN") {
+        await intakeScan({
+          barcode: code,
+          quantity: count,
+          invoiceNumber: (autoInvoice || "").trim(),
+        });
+        pushToast(
+          "success",
+          `+${count} vnt. pridėta${
+            autoInvoice ? ` (sąsk.: ${autoInvoice})` : ""
+          }: ${pname}`,
+          "Pridėta (auto)"
+        );
+        addHistory({
+          code,
+          name: pname,
+          manufacturer: existing?.manufacturer?.name || "",
+          qty: count,
+          status: "Pridėta (auto)",
+          invoiceNumber: autoInvoice || "",
+        });
+        soundOk();
+      } else {
+        // OUT
+        const available = existing?.quantity || 0;
+        if (available <= 0) {
+          pushToast("error", `Negalima išimti – ${pname} likutis 0.`, "Klaida");
+          addHistory({
+            code,
+            name: pname,
+            qty: 0,
+            status: "OUT atmesta (0 likutis)",
+          });
+          soundErr();
+          return;
+        }
+        const toRemove = Math.min(count, available);
+        await adjustQuantity(
+          existing._id,
+          -toRemove,
+          "Automatinis OUT (sukaupta)"
+        );
+        pushToast(
+          "success",
+          `-${toRemove} vnt. išimta: ${pname}`,
+          "Išimta (auto)"
+        );
+        addHistory({
+          code,
+          name: pname,
+          qty: -toRemove,
+          status:
+            toRemove < count
+              ? `Išimta dalinai (prašyta ${count}, buvo ${available})`
+              : "Išimta (auto)",
+        });
+        if (toRemove < count) {
+          soundWarn();
+        } else {
+          soundOk();
+        }
+      }
+    } catch (e) {
+      pushToast(
+        "error",
+        e?.response?.data?.message || "Klaida apdorojant partiją",
+        "Klaida"
+      );
+      soundErr();
+    }
+  }
+  // ──────── (END) Kaupimo logika ────────
 
   async function handleScanned(code) {
     setBarcode(code);
@@ -100,19 +284,35 @@ export default function Scan() {
       setGroupId(existing.group?._id || "");
       setSupplierId(existing.supplier?._id || "");
 
-      // Jei pasirinktas OUT, bet kiekis 0 – neleisti
+      if (autoMode) {
+        // Automatinis – kaupiam ir flush'insim po BATCH_WINDOW_MS
+        if (
+          action === "OUT" &&
+          (!existing.quantity || existing.quantity <= 0)
+        ) {
+          pushToast("error", "Negalima išimti: kiekis sandėlyje 0.", "Klaida");
+          soundErr();
+          scanInputRef.current?.focus();
+          return;
+        }
+        scheduleBatch({ action, code, name: existing.name });
+        scanInputRef.current?.focus();
+        return;
+      }
+
+      // Įprastas (modalas)
       if (action === "OUT" && (!existing.quantity || existing.quantity <= 0)) {
         pushToast(
           "error",
           "Negalima išimti: kiekis sandėlyje yra 0.",
           "Klaida"
         );
+        soundErr();
         scanInputRef.current?.focus();
         return;
       }
 
       setOpen(true);
-      // fokusas pagal veiksmą
       setTimeout(() => {
         const el = document.getElementById("qty-input");
         el?.focus();
@@ -127,18 +327,42 @@ export default function Scan() {
         status: action === "IN" ? "Laukia pridėjimo" : "Laukia išėmimo",
       });
     } catch {
-      // NAUJA PREKĖ: OUT draudžiam
+      // NAUJA PREKĖ
       if (action === "OUT") {
         pushToast(
           "error",
-          "Šio barkodo sistemoje nėra – negalima išimti.",
+          "Šio barkodo sistemoje nėra – OUT negalimas.",
           "Klaida"
         );
+        soundErr();
         scanInputRef.current?.focus();
         return;
       }
 
-      // Naujam IN – reikės pavadinimo ir gamintojo
+      if (autoMode) {
+        // Auto IN naujai prekei – vis tiek reikia duomenų (modalas)
+        setIsExisting(false);
+        setCurrent(null);
+        setName("");
+        setManufacturerId("");
+        setManufacturerName("");
+        setGroupId("");
+        setSupplierId("");
+        setInvoiceNumber(autoInvoice || "");
+        setOpen(true);
+        setTimeout(() => document.getElementById("name-input")?.focus(), 0);
+        addHistory({
+          code,
+          name: "",
+          manufacturer: "",
+          qty: 0,
+          status: "Nauja prekė – įveskite pavadinimą",
+        });
+        soundWarn();
+        return;
+      }
+
+      // Įprastas režimas (modalas)
       setIsExisting(false);
       setCurrent(null);
       setName("");
@@ -156,6 +380,7 @@ export default function Scan() {
         qty: 0,
         status: "Nauja prekė – įveskite pavadinimą",
       });
+      soundWarn();
     }
   }
 
@@ -167,7 +392,6 @@ export default function Scan() {
       const qtyNum = Math.max(1, Number(quantity) || 1);
 
       if (action === "IN") {
-        // IN
         const payload = {
           barcode,
           quantity: qtyNum,
@@ -185,6 +409,7 @@ export default function Scan() {
           }: ${result.name}`,
           "Prekė pridėta"
         );
+        soundOk();
         addHistory({
           code: barcode,
           name: result.name,
@@ -199,13 +424,14 @@ export default function Scan() {
         setManufacturerName(result.manufacturer?.name || "");
         setMessage(`OK! Pridėta. Dabartinis kiekis: ${result.quantity}`);
       } else {
-        // OUT – leidžiama tik esamai prekei, su pakankamu likučiu
+        // OUT – tik esamai prekei, su pakankamu likučiu
         if (!isExisting || !current?._id) {
           pushToast(
             "error",
             "Negalima išimti – prekės nėra sistemoje.",
             "Klaida"
           );
+          soundErr();
           return;
         }
         if (qtyNum > (current.quantity || 0)) {
@@ -214,6 +440,7 @@ export default function Scan() {
             `Negalima išimti ${qtyNum} vnt. – sandėlyje tik ${current.quantity} vnt.`,
             "Nepakanka kiekio"
           );
+          soundErr();
           return;
         }
 
@@ -224,6 +451,7 @@ export default function Scan() {
           `-${qtyNum} vnt. išimta: ${current.name}`,
           "Išimta"
         );
+        soundOk();
         addHistory({
           code: barcode,
           name: current.name,
@@ -232,7 +460,6 @@ export default function Scan() {
           status: "Išimta",
         });
 
-        // atnaujink lokaliai rodoma info
         setMessage(
           `OK! Išimta. Dabartinis kiekis: ${(current.quantity || 0) - qtyNum}`
         );
@@ -244,7 +471,12 @@ export default function Scan() {
       setOpen(false);
       scanInputRef.current?.focus();
     } catch (e) {
-      setMessage(e?.response?.data?.message || "Įvyko klaida");
+      pushToast(
+        "error",
+        e?.response?.data?.message || "Įvyko klaida",
+        "Klaida"
+      );
+      soundErr();
     } finally {
       setLoading(false);
     }
@@ -254,7 +486,7 @@ export default function Scan() {
     <div>
       <h1 className="text-2xl font-bold mb-4">Priėmimas / Skenavimas</h1>
 
-      {/* Veiksmo pasirinkimas */}
+      {/* Veiksmo pasirinkimas + auto režimas */}
       <div className="flex flex-wrap items-center gap-4 mb-4">
         <div className="inline-flex items-center gap-3 bg-white border rounded-2xl px-3 py-2">
           <label className="inline-flex items-center gap-2">
@@ -279,6 +511,41 @@ export default function Scan() {
             <span className="font-medium">Atimti (OUT)</span>
           </label>
         </div>
+
+        <label className="inline-flex items-center gap-2 bg-white border rounded-2xl px-3 py-2">
+          <input
+            type="checkbox"
+            checked={autoMode}
+            onChange={(e) => setAutoMode(e.target.checked)}
+          />
+          <span className="font-medium">Automatinis režimas (kaupimas)</span>
+        </label>
+
+        <label className="inline-flex items-center gap-2 bg-white border rounded-2xl px-3 py-2">
+          <span className="text-sm text-gray-600">Kiekis (auto)</span>
+          <input
+            type="number"
+            min={1}
+            value={autoQty}
+            onChange={(e) => setAutoQty(Number(e.target.value || 1))}
+            className="border rounded-xl p-2 w-24"
+          />
+          <span className="text-sm text-gray-600">vnt.</span>
+        </label>
+
+        {action === "IN" && (
+          <label className="inline-flex items-center gap-2 bg-white border rounded-2xl px-3 py-2">
+            <span className="text-sm text-gray-600">
+              Sąsk. nr. (auto, nebūtina)
+            </span>
+            <input
+              value={autoInvoice}
+              onChange={(e) => setAutoInvoice(e.target.value)}
+              className="border rounded-xl p-2 w-44"
+              placeholder="PVZ-12345"
+            />
+          </label>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -307,6 +574,33 @@ export default function Scan() {
               Fokusas į skenavimą
             </button>
           </div>
+
+          {/* Kaupiamų skenavimų būsenos rodinys */}
+          {autoMode && batchView.length > 0 && (
+            <div className="mt-4">
+              <h3 className="font-semibold mb-2">Kaupiama:</h3>
+              <div className="max-h-40 overflow-auto divide-y border rounded-xl">
+                {batchView.map((b) => (
+                  <div
+                    key={b.key}
+                    className="px-3 py-2 text-sm flex justify-between"
+                  >
+                    <div className="truncate">
+                      <span className="font-mono">{b.code}</span>{" "}
+                      <span className="text-gray-600">— {b.name || "..."}</span>
+                    </div>
+                    <div
+                      className={`font-semibold ${
+                        b.action === "OUT" ? "text-red-700" : "text-green-700"
+                      }`}
+                    >
+                      {b.action} × {b.count}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ISTORIJA */}
@@ -345,7 +639,7 @@ export default function Scan() {
         </div>
       </div>
 
-      {/* MODALAS */}
+      {/* MODALAS (tik kai reikia ranka patvirtinti / sukurti naują) */}
       <Modal
         open={open}
         onClose={() => {

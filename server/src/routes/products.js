@@ -7,6 +7,11 @@ import { validate } from "../utils/validate.js";
 
 const router = Router();
 
+function escapeRegex(s = "") {
+  // pabėgam specialius simbolius, kad vartotojo įvestis nelaužytų regex
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Greita paieška pagal barkodą – be populate, lean + select
 router.get(
   "/barcode/:barcode",
@@ -68,45 +73,60 @@ router.get(
   validate(
     Joi.object({
       query: Joi.object({
-        q: Joi.string().allow("").optional(),
-        groupId: Joi.string().allow("").optional(),
-        supplierId: Joi.string().allow("").optional(),
-        manufacturerId: Joi.string().allow("").optional(),
+        q: Joi.string().allow("").default(""),
+        groupId: Joi.string().allow(""),
+        supplierId: Joi.string().allow(""),
+        manufacturerId: Joi.string().allow(""),
         page: Joi.number().integer().min(1).default(1),
-        limit: Joi.number().integer().min(1).max(100).default(20),
-        sort: Joi.string()
-          .valid("name", "quantity", "createdAt")
-          .default("name"),
+        limit: Joi.number().integer().min(1).max(200).default(50),
       }),
     })
   ),
   async (req, res, next) => {
     try {
-      let { q, groupId, supplierId, manufacturerId, page, limit, sort } =
+      const { q, groupId, supplierId, manufacturerId, page, limit } =
         req.valid.query;
-      q = q?.trim() || undefined;
-      groupId = groupId || undefined;
-      supplierId = supplierId || undefined;
-      manufacturerId = manufacturerId || undefined;
 
       const filter = {};
-      if (q) filter.$text = { $search: q };
+
+      // ✅ Substring paieška per kelis „gabaliukus“ (visi turi atitikti)
+      if (q && q.trim()) {
+        const tokens = q
+          .split(/[\s\-_.]+/) // skaidom pagal tarpus, brūkšnelius, taškus ir pan.
+          .filter(Boolean)
+          .slice(0, 5); // saugiklis: iki 5 tokenų
+
+        if (tokens.length) {
+          filter.$and = tokens.map((t) => {
+            const rx = new RegExp(escapeRegex(t), "i");
+            return {
+              $or: [
+                { name: rx }, // DH-IPC-HDW2449T-S-PRO ras su "2449"
+                { barcode: rx }, // leidžia ieškoti ir pagal barkodo gabalą
+              ],
+            };
+          });
+        }
+      }
+
       if (groupId) filter.group = groupId;
       if (supplierId) filter.supplier = supplierId;
       if (manufacturerId) filter.manufacturer = manufacturerId;
 
-      const projection = q ? { score: { $meta: "textScore" } } : {};
-      let cursor = Product.find(filter, projection)
-        .select("barcode name quantity group supplier manufacturer")
-        .lean();
+      const [items, total] = await Promise.all([
+        Product.find(filter)
+          .sort({ name: 1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .lean(),
+        Product.countDocuments(filter),
+      ]);
 
-      if (q) cursor = cursor.sort({ score: { $meta: "textScore" } });
-      else cursor = cursor.sort({ [sort]: 1 });
-
-      const total = await Product.countDocuments(filter);
-      const items = await cursor.skip((page - 1) * limit).limit(limit);
-
-      res.json({ ok: true, data: items, pagination: { total, page, limit } });
+      res.json({
+        ok: true,
+        data: items,
+        pagination: { total, page, limit },
+      });
     } catch (e) {
       next(e);
     }
