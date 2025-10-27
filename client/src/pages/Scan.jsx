@@ -491,6 +491,29 @@ export default function Scan() {
     requestAnimationFrame(() => scanInputRef.current?.focus());
   }
 
+  function btnClass(kind) {
+    const isActive = action === kind;
+    const base =
+      "w-full rounded-2xl flex items-center justify-center px-6 py-6 md:py-10 text-2xl md:text-3xl font-extrabold tracking-wide shadow-lg hover:shadow-xl transition active:scale-[0.99]";
+    const ring = isActive
+      ? kind === "IN"
+        ? " ring-8 ring-green-300"
+        : " ring-8 ring-red-300"
+      : "";
+    if (!isActive) {
+      // NEAKTYVUS — PILKAS
+      return `${base} bg-gray-200 text-gray-500 ${ring}`;
+    }
+    // AKTYVUS — SPALVOTAS
+    return (
+      base +
+      (kind === "IN"
+        ? " text-white bg-gradient-to-br from-green-500 to-green-700"
+        : " text-white bg-gradient-to-br from-red-500 to-red-700") +
+      ring
+    );
+  }
+
   return (
     <div>
       <h1 className="text-2xl font-bold mb-4">Priėmimas / Skenavimas</h1>
@@ -499,15 +522,9 @@ export default function Scan() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
         <button
           onClick={() => chooseAction("IN")}
-          className={`w-full rounded-2xl 
-                flex items-center justify-center
-                px-6 py-6 md:py-10
-                text-white text-2xl md:text-3xl font-extrabold tracking-wide
-                bg-gradient-to-br from-green-500 to-green-700 
-                shadow-lg hover:shadow-xl transition
-                active:scale-[0.99]
-                ${action === "IN" ? "ring-8 ring-green-300" : "ring-0"}`}
+          className={btnClass("IN")}
           aria-label="Pridėti (IN)"
+          aria-pressed={action === "IN"}
         >
           <span className="inline-flex items-center gap-3">
             <span className="text-3xl md:text-4xl">➕</span>
@@ -517,15 +534,9 @@ export default function Scan() {
 
         <button
           onClick={() => chooseAction("OUT")}
-          className={`w-full rounded-2xl 
-                flex items-center justify-center
-                px-6 py-6 md:py-10
-                text-white text-2xl md:text-3xl font-extrabold tracking-wide
-                bg-gradient-to-br from-red-500 to-red-700 
-                shadow-lg hover:shadow-xl transition
-                active:scale-[0.99]
-                ${action === "OUT" ? "ring-8 ring-red-300" : "ring-0"}`}
+          className={btnClass("OUT")}
           aria-label="Atimti (OUT)"
+          aria-pressed={action === "OUT"}
         >
           <span className="inline-flex items-center gap-3">
             <span className="text-3xl md:text-4xl">➖</span>
