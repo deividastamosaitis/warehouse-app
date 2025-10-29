@@ -16,6 +16,7 @@ import groups from "./routes/groups.js";
 import suppliers from "./routes/suppliers.js";
 import manufacturers from "./routes/manufacturers.js";
 import movements from "./routes/movements.js";
+import barcodes from "./routes/barcodes.js";
 
 dotenv.config();
 
@@ -59,6 +60,7 @@ app.use("/api/groups", groups);
 app.use("/api/suppliers", suppliers);
 app.use("/api/manufacturers", manufacturers);
 app.use("/api/movements", movements);
+app.use("/api/barcodes", barcodes);
 
 // STATIC (FE build) – pateikiam React build'ą
 app.use(express.static(clientDist));

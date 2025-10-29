@@ -7,6 +7,7 @@ import Scan from "./pages/Scan";
 import Inventory from "./pages/Inventory";
 import Admin from "./pages/Admin";
 import Movements from "./pages/Movements";
+import Labels from "./pages/Labels";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route index element={<Navigate to="/scan" replace />} />
           <Route path="scan" element={<Scan />} />
           <Route path="inventory" element={<Inventory />} />
+          <Route path="barcode" element={<Labels />} />
           <Route path="movements" element={<Movements />} />
           <Route path="admin" element={<Admin />} />
         </Route>

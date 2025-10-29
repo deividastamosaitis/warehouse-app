@@ -52,3 +52,11 @@ export const fetchProductInvoices = (productId, limit = 5) =>
   api
     .get(`/products/${productId}/invoices`, { params: { limit } })
     .then((r) => r.data.data);
+
+export const reserveBarcodes = (count = 1) =>
+  api.post("/barcodes/reserve", { count }).then((r) => r.data.data);
+
+export const assignBarcode = (productId, barcode, force = false) =>
+  api
+    .post(`/barcodes/assign/${productId}`, { barcode, force })
+    .then((r) => r.data.data);

@@ -17,6 +17,9 @@ export default function Navbar() {
           <NavLink to="/inventory" className={link}>
             Prekių sąrašas
           </NavLink>
+          <NavLink to="/barcode" className={link}>
+            Barcode
+          </NavLink>
           <NavLink to="/movements" className={link}>
             Istorija
           </NavLink>
