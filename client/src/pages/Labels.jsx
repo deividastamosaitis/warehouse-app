@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { reserveBarcodes, assignBarcode, searchProducts } from "../api";
-import { generateLabelsPDF } from "../utils/labels";
+import { generateDK11201Label, generateDK11201Labels } from "../utils/labels";
 
 export default function Labels() {
   const [count, setCount] = useState(1);
@@ -10,29 +10,20 @@ export default function Labels() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  async function onReserve() {
+  async function onReserve(n = count) {
     setBusy(true);
     try {
-      const list = await reserveBarcodes(Math.max(1, Number(count) || 1));
+      const howMany = Math.max(1, Number(n) || 1);
+      const list = await reserveBarcodes(howMany);
       setCodes(list);
     } finally {
       setBusy(false);
     }
   }
 
-  async function onPrint() {
+  async function onPrintDK() {
     if (!codes.length) return alert("Pirma rezervuok barkodus.");
-    await generateLabelsPDF(codes, {
-      // pritaikyk DYMO/A4 maketą čia:
-      pageW: 210,
-      pageH: 297,
-      labelW: 54,
-      labelH: 25,
-      margin: 5,
-      cols: 3,
-      rows: 10,
-      textSize: 9,
-    });
+    await generateDK11201Labels(codes);
   }
 
   async function doSearch() {
@@ -45,7 +36,7 @@ export default function Labels() {
     setBusy(true);
     try {
       await assignBarcode(selectedProduct._id, code, false);
-      await generateLabelsPDF([code]);
+      await generateDK11201Label(code);
       alert(`Priskirtas barkodas ${code} prekei: ${selectedProduct.name}`);
     } catch (e) {
       alert(e?.response?.data?.message || "Nepavyko priskirti.");
@@ -71,18 +62,18 @@ export default function Labels() {
             className="border rounded-xl p-2 w-28"
           />
           <button
-            onClick={onReserve}
+            onClick={() => onReserve(count)}
             disabled={busy}
             className="px-4 py-2 rounded-xl bg-gray-900 text-white"
           >
             {busy ? "Kuriama..." : "Rezervuoti"}
           </button>
           <button
-            onClick={onPrint}
+            onClick={onPrintDK}
             disabled={!codes.length}
             className="px-4 py-2 rounded-xl bg-blue-600 text-white disabled:opacity-50"
           >
-            Spausdinti PDF
+            Spausdinti PDF (DK-11201)
           </button>
         </div>
 
@@ -98,14 +89,14 @@ export default function Labels() {
       <div className="bg-white border rounded-2xl p-4">
         <h2 className="text-lg font-semibold mb-1">Priskirti kodą prekei</h2>
         <p className="mb-3 text-gray-400">
-          Esamai prekei, jei pridėta ji be barcodo
+          Esamai prekei, jei atėjo be originalaus barkodo
         </p>
 
         <div className="flex gap-2 mb-3">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Paieška pagal pavadinimą, fragmentą"
+            placeholder="Paieška pagal pavadinimą / fragmentą"
             className="border rounded-xl p-2 flex-1"
           />
           <button
@@ -134,7 +125,7 @@ export default function Labels() {
 
         <div className="mt-3">
           <button
-            onClick={onReserve}
+            onClick={() => onReserve(1)}
             disabled={busy}
             className="px-4 py-2 rounded-xl bg-gray-900 text-white"
           >
@@ -145,7 +136,7 @@ export default function Labels() {
               if (!codes.length) return alert("Pirma rezervuok 1 kodą.");
               onAssignAndPrint(codes[0]);
             }}
-            className="ml-2 px-4 py-2 rounded-xl bg-green-600 text-white"
+            className="ml-2 px-4 py-2 rounded-xl bg-green-600 text-white disabled:opacity-50"
             disabled={!selectedProduct || !codes.length}
           >
             Priskirti pasirinktai prekei ir spausdinti
