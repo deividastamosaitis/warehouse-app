@@ -19,5 +19,21 @@ const StockMovementSchema = new mongoose.Schema(
 
 StockMovementSchema.index({ createdAt: -1 });
 StockMovementSchema.index({ product: 1, createdAt: -1 });
+// Greitas filtravimas
+StockMovementSchema.index(
+  { invoiceNumber: 1 },
+  { partialFilterExpression: { invoiceNumber: { $exists: true, $ne: "" } } }
+);
+
+// Greitam "produkto X turi tokia saskaita" tikrinimui (naudojam aggregate $lookup)
+StockMovementSchema.index(
+  { product: 1, invoiceNumber: 1 },
+  { partialFilterExpression: { invoiceNumber: { $exists: true, $ne: "" } } }
+);
+
+StockMovementSchema.index(
+  { invoiceNumber: 1, type: 1 },
+  { partialFilterExpression: { invoiceNumber: { $exists: true, $ne: "" } } }
+);
 
 export default mongoose.model("StockMovement", StockMovementSchema);

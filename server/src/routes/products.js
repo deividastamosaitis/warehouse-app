@@ -68,6 +68,7 @@ router.get("/:id/invoices", async (req, res, next) => {
 });
 
 // Sąrašas + filtrai – lean + select, be populate
+
 router.get(
   "/",
   validate(
@@ -77,6 +78,7 @@ router.get(
         groupId: Joi.string().allow(""),
         supplierId: Joi.string().allow(""),
         manufacturerId: Joi.string().allow(""),
+        invoice: Joi.string().allow("").default(""), // <— nauja
         page: Joi.number().integer().min(1).default(1),
         limit: Joi.number().integer().min(1).max(200).default(50),
       }),
@@ -84,49 +86,83 @@ router.get(
   ),
   async (req, res, next) => {
     try {
-      const { q, groupId, supplierId, manufacturerId, page, limit } =
+      const { q, groupId, supplierId, manufacturerId, invoice, page, limit } =
         req.valid.query;
 
-      const filter = {};
+      // Bazinis produktų filtras
+      const baseMatch = {};
+      if (groupId) baseMatch.group = groupId;
+      if (supplierId) baseMatch.supplier = supplierId;
+      if (manufacturerId) baseMatch.manufacturer = manufacturerId;
 
-      // ✅ Substring paieška per kelis „gabaliukus“ (visi turi atitikti)
+      // Substring paieška per tokenus (pavadinimas arba barkodas)
       if (q && q.trim()) {
         const tokens = q
-          .split(/[\s\-_.]+/) // skaidom pagal tarpus, brūkšnelius, taškus ir pan.
+          .split(/[\s\-_.]+/)
           .filter(Boolean)
-          .slice(0, 5); // saugiklis: iki 5 tokenų
-
+          .slice(0, 5);
         if (tokens.length) {
-          filter.$and = tokens.map((t) => {
+          baseMatch.$and = tokens.map((t) => {
             const rx = new RegExp(escapeRegex(t), "i");
-            return {
-              $or: [
-                { name: rx }, // DH-IPC-HDW2449T-S-PRO ras su "2449"
-                { barcode: rx }, // leidžia ieškoti ir pagal barkodo gabalą
-              ],
-            };
+            return { $or: [{ name: rx }, { barcode: rx }] };
           });
         }
       }
 
-      if (groupId) filter.group = groupId;
-      if (supplierId) filter.supplier = supplierId;
-      if (manufacturerId) filter.manufacturer = manufacturerId;
+      // Jei nėra sąskaitos filtro — paprasta find + count
+      if (!invoice || !invoice.trim()) {
+        const [items, total] = await Promise.all([
+          Product.find(baseMatch)
+            .sort({ name: 1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .lean(),
+          Product.countDocuments(baseMatch),
+        ]);
+        return res.json({
+          ok: true,
+          data: items,
+          pagination: { total, page, limit },
+        });
+      }
 
-      const [items, total] = await Promise.all([
-        Product.find(filter)
-          .sort({ name: 1 })
-          .skip((page - 1) * limit)
-          .limit(limit)
-          .lean(),
-        Product.countDocuments(filter),
-      ]);
+      // Yra sąskaitos filtras — naudojam aggregate su lookup į StockMovement
+      const inv = invoice.trim();
 
-      res.json({
-        ok: true,
-        data: items,
-        pagination: { total, page, limit },
-      });
+      const pipeline = [
+        { $match: baseMatch },
+        {
+          $lookup: {
+            from: "stockmovements",
+            let: { pid: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$product", "$$pid"] },
+                  type: "IN",
+                  invoiceNumber: inv,
+                },
+              },
+              { $limit: 1 },
+            ],
+            as: "mov",
+          },
+        },
+        { $match: { mov: { $ne: [] } } }, // paliekam tik tuos, kurie turi IN su ta sąskaita
+        { $sort: { name: 1 } },
+        {
+          $facet: {
+            data: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+            meta: [{ $count: "total" }],
+          },
+        },
+      ];
+
+      const result = await Product.aggregate(pipeline);
+      const data = result[0]?.data || [];
+      const total = result[0]?.meta?.[0]?.total || 0;
+
+      res.json({ ok: true, data, pagination: { total, page, limit } });
     } catch (e) {
       next(e);
     }

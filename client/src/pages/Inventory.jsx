@@ -29,6 +29,8 @@ export default function Inventory() {
   const [invOpen, setInvOpen] = useState(false);
   const [invProduct, setInvProduct] = useState(null);
 
+  const [invoice, setInvoice] = useState("");
+
   useEffect(() => {
     Promise.all([fetchGroups(), fetchSuppliers(), fetchManufacturers()]).then(
       ([gs, ss, ms]) => {
@@ -58,24 +60,27 @@ export default function Inventory() {
     groupId: "",
     supplierId: "",
     manufacturerId: "",
+    invoice: "",
   });
   useEffect(() => {
     const t = setTimeout(() => {
-      setDebounced({ q, groupId, supplierId, manufacturerId });
+      setDebounced({ q, groupId, supplierId, manufacturerId, invoice });
     }, 250);
     return () => clearTimeout(t);
-  }, [q, groupId, supplierId, manufacturerId]);
+  }, [q, groupId, supplierId, manufacturerId, invoice]);
 
   const load = useCallback(
     async (page = 1) => {
-      const { data, pagination: meta } = await searchProducts({
+      const params = {
         q: debounced.q,
         groupId: debounced.groupId,
         supplierId: debounced.supplierId,
         manufacturerId: debounced.manufacturerId,
         page,
         limit: pager.limit,
-      });
+      };
+      if (debounced.invoice?.trim()) params.invoice = debounced.invoice.trim();
+      const { data, pagination: meta } = await searchProducts(params);
       setItems(data);
       setPager(meta);
     },
@@ -84,6 +89,7 @@ export default function Inventory() {
       debounced.groupId,
       debounced.supplierId,
       debounced.manufacturerId,
+      debounced.invoice,
       pager.limit,
     ]
   );
@@ -113,11 +119,17 @@ export default function Inventory() {
     <div>
       <h1 className="text-2xl font-bold mb-4">Prekių sąrašas</h1>
 
-      <div className="bg-white border rounded-2xl p-4 grid md:grid-cols-5 gap-3 mb-4">
+      <div className="bg-white border rounded-2xl p-4 grid md:grid-cols-6 gap-3 mb-4">
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Paieška (pavadinimas)"
+          className="border rounded-xl p-2"
+        />
+        <input
+          value={invoice}
+          onChange={(e) => setInvoice(e.target.value)}
+          placeholder="Sąskaitos nr."
           className="border rounded-xl p-2"
         />
         <select

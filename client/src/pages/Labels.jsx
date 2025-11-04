@@ -1,58 +1,87 @@
+// client/src/pages/Labels.jsx
 import { useState } from "react";
 import { reserveBarcodes, assignBarcode, searchProducts } from "../api";
 import { generateDK11201Label, generateDK11201Labels } from "../utils/labels";
 
 export default function Labels() {
+  // A) Greitas „laisvų“ vidinių barkodų generavimas (jei reikia lipdukų be priskyrimo)
   const [count, setCount] = useState(1);
   const [codes, setCodes] = useState([]);
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState([]);
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [busyA, setBusyA] = useState(false);
 
   async function onReserve(n = count) {
-    setBusy(true);
+    setBusyA(true);
     try {
       const howMany = Math.max(1, Number(n) || 1);
       const list = await reserveBarcodes(howMany);
       setCodes(list);
     } finally {
-      setBusy(false);
+      setBusyA(false);
     }
   }
 
-  async function onPrintDK() {
+  async function onPrintFree() {
     if (!codes.length) return alert("Pirma rezervuok barkodus.");
-    await generateDK11201Labels(codes);
+    await generateDK11201Labels(codes); // po vieną PDF kiekvienam
   }
 
+  // B) Spausdinti pagal pasirinktą prekę (paieška pagal pavadinimą arba barkodą)
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [busyB, setBusyB] = useState(false);
+  const [copies, setCopies] = useState(1);
+
   async function doSearch() {
-    const { data } = await searchProducts({ q, page: 1, limit: 20 });
+    const { data } = await searchProducts({ q, page: 1, limit: 30 });
     setResults(data);
   }
 
-  async function onAssignAndPrint(code) {
-    if (!selectedProduct) return alert("Pasirink prekę iš kairės.");
-    setBusy(true);
+  async function printSelected() {
+    if (!selected) return;
+    if (!selected.barcode) {
+      alert(
+        "Ši prekė neturi barkodo. Pasinaudok mygtuku „Sugeneruoti, priskirti ir spausdinti“."
+      );
+      return;
+    }
+    const n = Math.max(1, Number(copies) || 1);
+    for (let i = 0; i < n; i++) {
+      await generateDK11201Label(String(selected.barcode));
+    }
+  }
+
+  async function assignAndPrintOne() {
+    if (!selected) return;
+    setBusyB(true);
     try {
-      await assignBarcode(selectedProduct._id, code, false);
-      await generateDK11201Label(code);
-      alert(`Priskirtas barkodas ${code} prekei: ${selectedProduct.name}`);
+      // 1) rezervuojam 1 naują vidinį kodą
+      const [code] = await reserveBarcodes(1);
+      // 2) priskiriam pasirinktai prekei
+      await assignBarcode(selected._id, code, false);
+      // 3) atnaujinam lokaliai, kad rodytų turimą barkodą
+      const updated = { ...selected, barcode: code };
+      setSelected(updated);
+      // 4) spausdinam 1 lipduką
+      await generateDK11201Label(String(code));
     } catch (e) {
-      alert(e?.response?.data?.message || "Nepavyko priskirti.");
+      alert(e?.response?.data?.message || "Nepavyko priskirti/spausdinti.");
     } finally {
-      setBusy(false);
+      setBusyB(false);
     }
   }
 
   return (
     <div className="grid md:grid-cols-2 gap-6">
-      {/* 1) Rezervuoti ir spausdinti N kodų (be priskyrimo) */}
+      {/* A) Laisvi vidiniai barkodai (nebūtina naudoti, bet patogu turėti) */}
       <div className="bg-white border rounded-2xl p-4">
         <h2 className="text-lg font-semibold mb-1">
-          Generuoti vidinius barkodus
+          Generuoti vidinius barkodus (laisvi)
         </h2>
-        <p className="mb-3 text-gray-400">Nauja prekė (išparduotuvinė)</p>
+        <p className="mb-3 text-gray-400">
+          Naudinga, kai reikia kelių tuščių lipdukų be priskyrimo prekei.
+        </p>
+
         <div className="flex items-center gap-3">
           <input
             type="number"
@@ -63,13 +92,13 @@ export default function Labels() {
           />
           <button
             onClick={() => onReserve(count)}
-            disabled={busy}
+            disabled={busyA}
             className="px-4 py-2 rounded-xl bg-gray-900 text-white"
           >
-            {busy ? "Kuriama..." : "Rezervuoti"}
+            {busyA ? "Kuriama..." : "Rezervuoti"}
           </button>
           <button
-            onClick={onPrintDK}
+            onClick={onPrintFree}
             disabled={!codes.length}
             className="px-4 py-2 rounded-xl bg-blue-600 text-white disabled:opacity-50"
           >
@@ -85,18 +114,20 @@ export default function Labels() {
         )}
       </div>
 
-      {/* 2) Priskirti kodą konkrečiai prekei ir iškart atspausdinti */}
+      {/* B) Spausdinti pasirinktai prekei */}
       <div className="bg-white border rounded-2xl p-4">
-        <h2 className="text-lg font-semibold mb-1">Priskirti kodą prekei</h2>
+        <h2 className="text-lg font-semibold mb-1">
+          Spausdinti prekės barkodą
+        </h2>
         <p className="mb-3 text-gray-400">
-          Esamai prekei, jei atėjo be originalaus barkodo
+          Įvesk pavadinimo fragmentą arba barkodą, pasirink prekę ir spausdink.
         </p>
 
         <div className="flex gap-2 mb-3">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Paieška pagal pavadinimą / fragmentą"
+            placeholder="Pvz.: „varžtas“, „2449“, ar pilnas barkodas"
             className="border rounded-xl p-2 flex-1"
           />
           <button
@@ -107,40 +138,66 @@ export default function Labels() {
           </button>
         </div>
 
-        <div className="max-h-56 overflow-auto border rounded-xl divide-y">
+        <div className="max-h-56 overflow-auto border rounded-xl divide-y mb-3">
           {results.map((p) => (
             <div
               key={p._id}
-              onClick={() => setSelectedProduct(p)}
+              onClick={() => setSelected(p)}
               className={`p-2 text-sm cursor-pointer ${
-                selectedProduct?._id === p._id ? "bg-blue-50" : ""
+                selected?._id === p._id ? "bg-blue-50" : ""
               }`}
             >
               <div className="font-medium">{p.name}</div>
-              <div className="text-gray-600">Barkodas: {p.barcode || "—"}</div>
+              <div className="text-gray-600">
+                Barkodas: {p.barcode || "— nėra —"}
+              </div>
               <div className="text-gray-600">Kiekis: {p.quantity}</div>
             </div>
           ))}
+          {results.length === 0 && (
+            <div className="p-3 text-sm text-gray-500">Nerasta.</div>
+          )}
         </div>
 
-        <div className="mt-3">
+        {selected && (
+          <div className="bg-gray-50 border rounded-xl p-3 mb-3">
+            <div className="font-medium">{selected.name}</div>
+            <div className="text-gray-600">
+              Barkodas: {selected.barcode || "— nėra —"}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <label className="inline-flex items-center gap-2">
+            <span className="text-sm text-gray-600">Kopijų</span>
+            <input
+              type="number"
+              min={1}
+              value={copies}
+              onChange={(e) => setCopies(e.target.value)}
+              className="border rounded-xl p-2 w-24"
+            />
+          </label>
+
           <button
-            onClick={() => onReserve(1)}
-            disabled={busy}
-            className="px-4 py-2 rounded-xl bg-gray-900 text-white"
+            onClick={printSelected}
+            disabled={!selected}
+            className="px-4 py-2 rounded-xl bg-blue-600 text-white disabled:opacity-50"
           >
-            {busy ? "Kuriama..." : "Rezervuoti 1 kodą"}
+            Spausdinti pasirinktą
           </button>
-          <button
-            onClick={() => {
-              if (!codes.length) return alert("Pirma rezervuok 1 kodą.");
-              onAssignAndPrint(codes[0]);
-            }}
-            className="ml-2 px-4 py-2 rounded-xl bg-green-600 text-white disabled:opacity-50"
-            disabled={!selectedProduct || !codes.length}
-          >
-            Priskirti pasirinktai prekei ir spausdinti
-          </button>
+
+          {!selected?.barcode && (
+            <button
+              onClick={assignAndPrintOne}
+              disabled={!selected || busyB}
+              className="px-4 py-2 rounded-xl bg-green-600 text-white disabled:opacity-50"
+              title="Sugeneruos 1 vidinį barkodą, priskirs prekei ir iškart atspausdins"
+            >
+              {busyB ? "Vykdoma..." : "Sugeneruoti, priskirti ir spausdinti"}
+            </button>
+          )}
         </div>
       </div>
     </div>
