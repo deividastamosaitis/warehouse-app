@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchMovements } from "../api";
 
+const USER_NAME_BY_ID = {
+  "678d5aae9b0780254f713335": "Deividas",
+  "678e9fa54074c5f3fc922d6e": "Ričardas",
+  "67e15cfda9ee4d52d0083599": "Laimis",
+  "67e2656bc73d9ced46b24afa": "Ramutė",
+  "67e2656cc73d9ced46b24afd": "Raimonda",
+  "683d3cfd2dc11d2bf89f2a7b": "Kristina",
+  "6865414e74515ec37bcf0420": "Lukas",
+  "6895962d6108e5c4cc7afb49": "Marijus",
+};
+
 export default function Movements() {
   const [q, setQ] = useState("");
 
@@ -101,14 +112,19 @@ export default function Movements() {
               <th className="text-left p-3">Prekė</th>
               <th className="text-left p-3">Barkodas</th>
               <th className="text-right p-3">Kiekis</th>
+              <th className="text-left p-3">Klientas</th>
+              <th className="text-left p-3">Tel.</th>
+              <th className="text-right p-3">Suma</th>
+              <th className="text-left p-3">Kvitas</th>
               <th className="text-left p-3">Sąskaita</th>
+              <th className="text-left p-3">Sukūrė</th>
             </tr>
           </thead>
           <tbody>
             {items.map((m) => {
               const isOut = m.type === "OUT";
-              const rowCls = isOut ? "bg-red-50" : ""; // fono spalva OUT
-              const textCls = isOut ? "text-red-700" : ""; // teksto spalva OUT
+              const rowCls = isOut ? "bg-red-50" : "";
+              const textCls = isOut ? "text-red-700" : "";
               const badgeCls =
                 m.type === "IN"
                   ? "bg-green-100 text-green-800"
@@ -116,9 +132,12 @@ export default function Movements() {
 
               return (
                 <tr key={m._id} className={`border-t ${rowCls}`}>
+                  {/* Data */}
                   <td className={`p-3 ${textCls}`}>
                     {new Date(m.createdAt).toLocaleString()}
                   </td>
+
+                  {/* Tipas */}
                   <td className="p-3">
                     <span
                       className={`px-2 py-0.5 rounded-full text-xs font-semibold ${badgeCls}`}
@@ -126,12 +145,39 @@ export default function Movements() {
                       {m.type}
                     </span>
                   </td>
+
+                  {/* Prekė + barkodas */}
                   <td className={`p-3 ${textCls}`}>{m.product?.name || "—"}</td>
                   <td className={`p-3 ${textCls}`}>
                     {m.product?.barcode || "—"}
                   </td>
+
+                  {/* Kiekis */}
                   <td className={`p-3 text-right ${textCls}`}>{m.quantity}</td>
-                  <td className={`p-3 ${textCls}`}>{m.invoiceNumber || "—"}</td>
+
+                  {/* Klientas tik jei turim duomenis (dažniausiai OUT iš garantinio) */}
+                  <td className="p-3">{m.clientName ? m.clientName : "—"}</td>
+                  <td className="p-3">{m.clientPhone ? m.clientPhone : "—"}</td>
+
+                  {/* Suma už šį judėjimą, jei perduota */}
+                  <td className="p-3 text-right">
+                    {typeof m.totalAmount === "number"
+                      ? `${m.totalAmount.toFixed(2)} €`
+                      : "—"}
+                  </td>
+
+                  {/* Kvito numeris – jei yra, rodom visada */}
+                  <td className="p-3">{m.receiptNumber || "—"}</td>
+
+                  {/* Sąskaitos nr. – tiek IN (tiekėjo), tiek OUT (kliento) */}
+                  <td className="p-3">{m.invoiceNumber || "—"}</td>
+                  <td className={`p-3 ${textCls}`}>
+                    {m.createdByName
+                      ? m.createdByName
+                      : m.createdById && USER_NAME_BY_ID[m.createdById]
+                      ? USER_NAME_BY_ID[m.createdById]
+                      : "—"}
+                  </td>
                 </tr>
               );
             })}

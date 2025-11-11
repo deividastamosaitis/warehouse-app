@@ -13,6 +13,34 @@ const StockMovementSchema = new mongoose.Schema(
     supplier: { type: mongoose.Schema.Types.ObjectId, ref: "Supplier" },
     note: { type: String, default: "" },
     invoiceNumber: { type: String, trim: true, default: "" },
+    source: {
+      type: String,
+    },
+
+    clientName: {
+      type: String,
+    },
+    clientPhone: {
+      type: String,
+    },
+
+    totalAmount: {
+      type: Number,
+    },
+
+    receiptNumber: {
+      type: String,
+    },
+
+    saleInvoiceNumber: {
+      type: String,
+    },
+
+    garantinisId: {
+      type: String,
+    },
+    createdById: String,
+    createdByName: String,
   },
   { timestamps: true }
 );

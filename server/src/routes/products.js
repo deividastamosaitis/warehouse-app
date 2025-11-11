@@ -178,34 +178,77 @@ router.patch(
       body: Joi.object({
         delta: Joi.number().integer().required(),
         note: Joi.string().allow("").optional(),
+
+        // NAUJI laukai iš garantinio
+        source: Joi.string().allow("").optional(),
+        clientName: Joi.string().allow("").optional(),
+        clientPhone: Joi.string().allow("").optional(),
+        totalAmount: Joi.number().optional(),
+        receiptNumber: Joi.string().allow("").optional(),
+        saleInvoiceNumber: Joi.string().allow("").optional(),
+        garantinisId: Joi.string().allow("").optional(),
+        createdById: Joi.string().allow("").optional(),
+        createdByName: Joi.string().allow("").optional(),
       }),
     })
   ),
   async (req, res, next) => {
     try {
       const { id } = req.valid.params;
-      const { delta, note } = req.valid.body;
+      const {
+        delta,
+        note,
+        source,
+        clientName,
+        clientPhone,
+        totalAmount,
+        receiptNumber,
+        saleInvoiceNumber,
+        garantinisId,
+        createdById,
+        createdByName,
+      } = req.valid.body;
+
       const product = await Product.findById(id);
       if (!product)
         return res.status(404).json({ ok: false, message: "Prekė nerasta" });
 
       const newQty = product.quantity + delta;
-      if (newQty < 0)
+
+      // A variantas: NELEISTI minuso
+      if (newQty < 0) {
         return res
           .status(400)
           .json({ ok: false, message: "Kiekis negali tapti neigiamas" });
+      }
 
       await Product.updateOne({ _id: id }, { $inc: { quantity: delta } });
+
       await StockMovement.create({
         product: id,
         type: delta >= 0 ? "IN" : "OUT",
         quantity: Math.abs(delta),
         note,
+
+        // iš garantinio (jei buvo paduota)
+        source,
+        clientName,
+        clientPhone,
+        totalAmount,
+        receiptNumber,
+        saleInvoiceNumber,
+        garantinisId,
+
+        // jei nori OUT sąskaitą jungti prie bendro invoiceNumber:
+        ...(saleInvoiceNumber && { invoiceNumber: saleInvoiceNumber }),
+        createdById,
+        createdByName,
       });
 
       const updated = await Product.findById(id)
         .select("barcode name quantity group supplier manufacturer")
         .lean();
+
       res.json({ ok: true, data: updated });
     } catch (e) {
       next(e);
